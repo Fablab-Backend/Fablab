@@ -1,14 +1,20 @@
-import { INestApplication } from '@nestjs/common';
-import { Test, TestingModule } from '@nestjs/testing';
-import { getModelToken } from '@nestjs/mongoose';
-import { EventEmitter2 } from 'eventemitter2';
+import 'reflect-metadata';
+import { after, before, describe, it, mock } from 'node:test';
+import assert from 'node:assert/strict';
 import { Types } from 'mongoose';
 import request from 'supertest';
-import { Notification, NotificationType } from './notifications.model';
+import { Test } from '@nestjs/testing';
+import { Reflector } from '@nestjs/core';
+import { INestApplication } from '@nestjs/common';
+import { UserRole } from '../../common/enums/user-role.enum';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { UserDocument } from '../users/users.model';
+import { NotificationType } from './notifications.model';
 import { NotificationsController } from './notifications.controller';
-import { NotificationsService, NOTIFICATION_CREATED_EVENT } from './notifications.service';
-import { MAILER, Mailer } from './notifications.mailer';
-import { AuthenticatedUser } from './notifications.user';
+import {
+  NOTIFICATION_CREATED_EVENT,
+  NotificationsService,
+} from './notifications.service';
 
 const USER_ID = new Types.ObjectId().toHexString();
 const OTHER_USER_ID = new Types.ObjectId().toHexString();
@@ -26,45 +32,47 @@ function buildNotificationDoc(overrides: Record<string, unknown> = {}) {
     read: false,
     readAt: undefined,
     emailStatus: 'not_requested',
-    save: jest.fn().mockResolvedValue(undefined),
+    save: mock.fn<() => Promise<void>>(async () => {}),
     ...overrides,
   };
 }
 
-function mockFindQuery(items: unknown[]) {
-  const limit = jest.fn().mockResolvedValue(items);
-  const skip = jest.fn().mockReturnValue({ limit });
-  const sort = jest.fn().mockReturnValue({ skip });
+function findQuery(items: unknown[]) {
+  const limit = mock.fn<(n?: number) => Promise<unknown[]>>(() =>
+    Promise.resolve(items),
+  );
+  const skip = mock.fn<(n?: number) => { limit: typeof limit }>(() => ({ limit }));
+  const sort = mock.fn<(s?: unknown) => { skip: typeof skip }>(() => ({ skip }));
   return { sort, skip, limit };
 }
 
-async function createServiceMocks() {
+function makeService() {
   const notificationModel = {
-    create: jest.fn(),
-    find: jest.fn(),
-    countDocuments: jest.fn(),
+    create: mock.fn<(doc?: unknown) => Promise<unknown>>(),
+    find: mock.fn<(filter?: unknown) => unknown>(),
+    countDocuments: mock.fn<(filter?: unknown) => Promise<number>>(),
   };
-  const mailer: jest.Mocked<Mailer> = { send: jest.fn() };
-  const eventEmitter = { emit: jest.fn() };
-
-  const moduleRef: TestingModule = await Test.createTestingModule({
-    providers: [
-      NotificationsService,
-      { provide: getModelToken(Notification.name), useValue: notificationModel },
-      { provide: MAILER, useValue: mailer },
-      { provide: EventEmitter2, useValue: eventEmitter },
-    ],
-  }).compile();
-
-  const service = moduleRef.get(NotificationsService);
+  const mailer = {
+    send: mock.fn<(to: string, subject: string, body: string) => Promise<void>>(
+      async () => {},
+    ),
+  };
+  const eventEmitter = {
+    emit: mock.fn<(event: string, payload?: unknown) => boolean>(() => true),
+  };
+  const service = new NotificationsService(
+    notificationModel as never,
+    mailer as never,
+    eventEmitter as never,
+  );
   return { service, notificationModel, mailer, eventEmitter };
 }
 
 describe('NotificationsService.notify', () => {
-  it('creates a notification with default in_app channel and not_requested email status', async () => {
-    const { service, notificationModel, mailer, eventEmitter } = await createServiceMocks();
+  it('crée une notification avec le canal in_app par défaut et emailStatus not_requested', async () => {
+    const { service, notificationModel, mailer, eventEmitter } = makeService();
     const doc = buildNotificationDoc();
-    notificationModel.create.mockResolvedValue(doc);
+    notificationModel.create.mock.mockImplementation(async () => doc);
 
     const result = await service.notify({
       userId: USER_ID,
@@ -73,23 +81,25 @@ describe('NotificationsService.notify', () => {
       message: 'Votre prêt a été créé',
     });
 
-    expect(notificationModel.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId: new Types.ObjectId(USER_ID),
-        type: NotificationType.LOAN_CREATED,
-        channels: ['in_app'],
-        emailStatus: 'not_requested',
-      }),
-    );
-    expect(mailer.send).not.toHaveBeenCalled();
-    expect(result).toBe(doc);
-    expect(eventEmitter.emit).toHaveBeenCalledWith(NOTIFICATION_CREATED_EVENT, doc);
+    assert.deepEqual(notificationModel.create.mock.calls[0].arguments[0], {
+      userId: new Types.ObjectId(USER_ID),
+      type: NotificationType.LOAN_CREATED,
+      title: 'Prêt créé',
+      message: 'Votre prêt a été créé',
+      data: {},
+      channels: ['in_app'],
+      emailStatus: 'not_requested',
+    });
+    assert.equal(mailer.send.mock.callCount(), 0);
+    assert.equal(result, doc);
+    assert.equal(eventEmitter.emit.mock.calls[0].arguments[0], NOTIFICATION_CREATED_EVENT);
+    assert.equal(eventEmitter.emit.mock.calls[0].arguments[1], doc);
   });
 
-  it('sends an email and marks emailStatus as sent when the email channel is requested', async () => {
-    const { service, notificationModel, mailer } = await createServiceMocks();
+  it('envoie le courriel et passe emailStatus à sent quand le canal email est demandé', async () => {
+    const { service, notificationModel, mailer } = makeService();
     const doc = buildNotificationDoc();
-    notificationModel.create.mockResolvedValue(doc);
+    notificationModel.create.mock.mockImplementation(async () => doc);
 
     await service.notify({
       userId: USER_ID,
@@ -100,20 +110,22 @@ describe('NotificationsService.notify', () => {
       email: 'user@example.com',
     });
 
-    expect(mailer.send).toHaveBeenCalledWith(
+    assert.deepEqual(mailer.send.mock.calls[0].arguments, [
       'user@example.com',
       'Réservation confirmée',
       'Votre réservation est confirmée',
-    );
-    expect(doc.emailStatus).toBe('sent');
-    expect(doc.save).toHaveBeenCalled();
+    ]);
+    assert.equal(doc.emailStatus, 'sent');
+    assert.equal(doc.save.mock.callCount(), 1);
   });
 
-  it('does not throw when the mailer fails and marks emailStatus as failed', async () => {
-    const { service, notificationModel, mailer } = await createServiceMocks();
+  it("ne lève pas d'erreur quand le Mailer échoue et passe emailStatus à failed", async () => {
+    const { service, notificationModel, mailer } = makeService();
     const doc = buildNotificationDoc();
-    notificationModel.create.mockResolvedValue(doc);
-    mailer.send.mockRejectedValue(new Error('SMTP down'));
+    notificationModel.create.mock.mockImplementation(async () => doc);
+    mailer.send.mock.mockImplementation(async () => {
+      throw new Error('SMTP down');
+    });
 
     const result = await service.notify({
       userId: USER_ID,
@@ -124,146 +136,177 @@ describe('NotificationsService.notify', () => {
       email: 'user@example.com',
     });
 
-    expect(result).toBe(doc);
-    expect(doc.emailStatus).toBe('failed');
-    expect(doc.save).toHaveBeenCalled();
+    assert.equal(result, doc);
+    assert.equal(doc.emailStatus, 'failed');
+    assert.equal(doc.save.mock.callCount(), 1);
   });
 
-  it('propagates database creation errors', async () => {
-    const { service, notificationModel } = await createServiceMocks();
-    notificationModel.create.mockRejectedValue(new Error('Mongo down'));
+  it('propage les erreurs de création en base', async () => {
+    const { service, notificationModel } = makeService();
+    notificationModel.create.mock.mockImplementation(async () => {
+      throw new Error('Mongo down');
+    });
 
-    await expect(
+    await assert.rejects(
       service.notify({
         userId: USER_ID,
         type: NotificationType.LOAN_CREATED,
         title: 'Prêt créé',
         message: 'Votre prêt a été créé',
       }),
-    ).rejects.toThrow('Mongo down');
+      /Mongo down/,
+    );
   });
 });
 
 describe('NotificationsService.listForUser', () => {
-  it('returns notifications sorted by newest first with pagination metadata', async () => {
-    const { service, notificationModel } = await createServiceMocks();
+  it('renvoie les notifications triées de la plus récente à la plus ancienne avec pagination', async () => {
+    const { service, notificationModel } = makeService();
     const items = [buildNotificationDoc(), buildNotificationDoc()];
-    const query = mockFindQuery(items);
-    notificationModel.find.mockReturnValue(query);
-    notificationModel.countDocuments.mockResolvedValue(5);
+    const query = findQuery(items);
+    notificationModel.find.mock.mockImplementation(() => query);
+    notificationModel.countDocuments.mock.mockImplementation(async () => 5);
 
-    const result = await service.listForUser(USER_ID, { page: 2, limit: 2, unreadOnly: false });
+    const result = await service.listForUser(USER_ID, {
+      page: 2,
+      limit: 2,
+      unreadOnly: false,
+    });
 
-    expect(notificationModel.find).toHaveBeenCalledWith({ userId: new Types.ObjectId(USER_ID) });
-    expect(query.sort).toHaveBeenCalledWith({ createdAt: -1 });
-    expect(query.skip).toHaveBeenCalledWith(2);
-    expect(query.limit).toHaveBeenCalledWith(2);
-    expect(notificationModel.countDocuments).toHaveBeenCalledWith({
+    assert.deepEqual(notificationModel.find.mock.calls[0].arguments[0], {
       userId: new Types.ObjectId(USER_ID),
     });
-    expect(result).toEqual({ items, total: 5, page: 2, limit: 2 });
+    assert.deepEqual(query.sort.mock.calls[0].arguments[0], { createdAt: -1 });
+    assert.deepEqual(query.skip.mock.calls[0].arguments[0], 2);
+    assert.deepEqual(query.limit.mock.calls[0].arguments[0], 2);
+    assert.deepEqual(result, { items, total: 5, page: 2, limit: 2 });
   });
 
-  it('filters unread notifications only', async () => {
-    const { service, notificationModel } = await createServiceMocks();
-    const query = mockFindQuery([]);
-    notificationModel.find.mockReturnValue(query);
-    notificationModel.countDocuments.mockResolvedValue(0);
+  it("filtre les notifications non lues quand unreadOnly est vrai", async () => {
+    const { service, notificationModel } = makeService();
+    const query = findQuery([]);
+    notificationModel.find.mock.mockImplementation(() => query);
+    notificationModel.countDocuments.mock.mockImplementation(async () => 0);
 
     await service.listForUser(USER_ID, { page: 1, limit: 20, unreadOnly: true });
 
-    expect(notificationModel.find).toHaveBeenCalledWith({
+    assert.deepEqual(notificationModel.find.mock.calls[0].arguments[0], {
+      userId: new Types.ObjectId(USER_ID),
+      read: false,
+    });
+    assert.deepEqual(notificationModel.countDocuments.mock.calls[0].arguments[0], {
       userId: new Types.ObjectId(USER_ID),
       read: false,
     });
   });
 
-  it('never returns notifications belonging to another user', async () => {
-    const { service, notificationModel } = await createServiceMocks();
-    notificationModel.find.mockReturnValue(mockFindQuery([]));
-    notificationModel.countDocuments.mockResolvedValue(0);
+  it("n'expose jamais les notifications d'un autre utilisateur", async () => {
+    const { service, notificationModel } = makeService();
+    notificationModel.find.mock.mockImplementation(() => findQuery([]));
+    notificationModel.countDocuments.mock.mockImplementation(async () => 0);
 
     await service.listForUser(USER_ID, { page: 1, limit: 20, unreadOnly: false });
 
-    const filter = notificationModel.find.mock.calls[0][0] as { userId: Types.ObjectId };
-    expect(filter.userId.toHexString()).toBe(USER_ID);
-    expect(filter.userId.toHexString()).not.toBe(OTHER_USER_ID);
+    const filter = notificationModel.find.mock.calls[0].arguments[0] as {
+      userId: Types.ObjectId;
+    };
+    assert.equal(filter.userId.toHexString(), USER_ID);
+    assert.notEqual(filter.userId.toHexString(), OTHER_USER_ID);
   });
 });
 
 describe('GET /api/notifications', () => {
-  const currentUser: AuthenticatedUser = { id: USER_ID, role: 'user' };
+  const userDocument = {
+    _id: new Types.ObjectId(USER_ID),
+    id: USER_ID,
+    email: 'user@fablab.local',
+    role: UserRole.UTILISATEUR,
+    isActive: true,
+  } as unknown as UserDocument;
+
   let app: INestApplication;
-  let notificationModel: {
-    create: jest.Mock;
-    find: jest.Mock;
-    countDocuments: jest.Mock;
-  };
-  let service: NotificationsService;
+  let notificationModel: ReturnType<typeof makeService>['notificationModel'];
 
-  beforeAll(async () => {
-    const mocks = await createServiceMocks();
-    service = mocks.service;
-    notificationModel = mocks.notificationModel;
+  before(async () => {
+    const { service, notificationModel: model } = makeService();
+    notificationModel = model;
 
-    const moduleRef: TestingModule = await Test.createTestingModule({
+    // Vrai guard JWT : JwtService et UsersService sont simulés, le guard lui-même est réel.
+    const jwtAuthGuard = new JwtAuthGuard(
+      { verifyAsync: async () => ({ sub: USER_ID }) } as never,
+      { findById: async () => userDocument } as never,
+      new Reflector(),
+    );
+
+    const moduleRef = await Test.createTestingModule({
       controllers: [NotificationsController],
-      providers: [
-        { provide: NotificationsService, useValue: service },
-      ],
+      providers: [{ provide: NotificationsService, useValue: service }],
     }).compile();
 
     app = moduleRef.createNestApplication();
     app.setGlobalPrefix('api');
-    app.use((req: { user?: AuthenticatedUser }, _res: unknown, next: () => void) => {
-      req.user = currentUser;
-      next();
-    });
+    app.useGlobalGuards(jwtAuthGuard);
     await app.init();
   });
 
-  afterAll(async () => {
+  after(async () => {
     await app.close();
   });
 
-  it('returns a paginated list for the authenticated user', async () => {
+  it('renvoie une liste paginée pour l’utilisateur authentifié', async () => {
     const items = [buildNotificationDoc()];
-    notificationModel.find.mockReturnValue(mockFindQuery(items));
-    notificationModel.countDocuments.mockResolvedValue(1);
+    notificationModel.find.mock.mockImplementation(() => findQuery(items));
+    notificationModel.countDocuments.mock.mockImplementation(async () => 1);
 
     const response = await request(app.getHttpServer())
       .get('/api/notifications')
+      .set('Authorization', 'Bearer fake-token')
       .query({ page: 1, limit: 10 })
       .expect(200);
 
-    expect(response.body).toEqual({ items: expect.any(Array), total: 1, page: 1, limit: 10 });
-    expect(notificationModel.find).toHaveBeenCalledWith({ userId: new Types.ObjectId(USER_ID) });
+    assert.equal(response.status, 200);
+    assert.ok(Array.isArray(response.body.items));
+    assert.equal(response.body.items.length, 1);
+    assert.equal(response.body.total, 1);
+    assert.equal(response.body.page, 1);
+    assert.equal(response.body.limit, 10);
+    assert.deepEqual(
+      notificationModel.find.mock.calls.at(-1)?.arguments[0],
+      { userId: new Types.ObjectId(USER_ID) },
+    );
   });
 
-  it('passes unreadOnly through to the service layer', async () => {
-    notificationModel.find.mockReturnValue(mockFindQuery([]));
-    notificationModel.countDocuments.mockResolvedValue(0);
+  it('transmet unreadOnly au service', async () => {
+    notificationModel.find.mock.mockImplementation(() => findQuery([]));
+    notificationModel.countDocuments.mock.mockImplementation(async () => 0);
 
     await request(app.getHttpServer())
       .get('/api/notifications')
+      .set('Authorization', 'Bearer fake-token')
       .query({ unreadOnly: 'true' })
       .expect(200);
 
-    expect(notificationModel.find).toHaveBeenCalledWith({
-      userId: new Types.ObjectId(USER_ID),
-      read: false,
-    });
+    assert.deepEqual(
+      notificationModel.find.mock.calls.at(-1)?.arguments[0],
+      { userId: new Types.ObjectId(USER_ID), read: false },
+    );
   });
 
-  it('rejects invalid pagination parameters with 400', async () => {
+  it('rejette les paramètres de pagination invalides avec 400', async () => {
     await request(app.getHttpServer())
       .get('/api/notifications')
+      .set('Authorization', 'Bearer fake-token')
       .query({ limit: 500 })
       .expect(400);
 
     await request(app.getHttpServer())
       .get('/api/notifications')
+      .set('Authorization', 'Bearer fake-token')
       .query({ page: 'abc' })
       .expect(400);
+  });
+
+  it('renvoie 401 sans token', async () => {
+    await request(app.getHttpServer()).get('/api/notifications').expect(401);
   });
 });
