@@ -2,6 +2,8 @@ import { Controller, Post, UseInterceptors, UploadedFile, Body } from '@nestjs/c
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname } from 'path';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { UserRole } from '../../common/enums/user-role.enum';
 import { FilesService } from './files.service';
 
 // Configuration de Multer pour stocker dans le dossier /uploads avec un nom unique
@@ -14,14 +16,15 @@ export const multerConfig = {
       cb(null, `${file.fieldname}-${uniqueSuffix}${ext}`);
     },
   }),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 Mo maximum par fichier
 };
 
 @Controller('files')
 export class FilesController {
   constructor(private readonly filesService: FilesService) {}
 
-  // @UseGuards(AuthGuard) <-- À décommenter plus tard
   @Post('upload')
+  @Roles(UserRole.RESPONSABLE, UserRole.ADMINISTRATEUR)
   @UseInterceptors(FileInterceptor('file', multerConfig))
   uploadFile(
     @UploadedFile() file: Express.Multer.File,

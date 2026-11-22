@@ -1,9 +1,12 @@
 {
   "compilerOptions": {
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
     "types": ["node", "jest"],
 >>>>>>> marie_feature/files
+=======
+>>>>>>> feature/chatbot-fix
     "module": "commonjs",
     "declaration": true,
     "removeComments": true,
@@ -11,29 +14,46 @@
     "experimentalDecorators": true,
     "allowSyntheticDefaultImports": true,
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> feature/chatbot-fix
     "target": "ES2022",
     "sourceMap": true,
     "outDir": "./dist",
     "baseUrl": "./",
+<<<<<<< HEAD
 =======
     "target": "ES2021",
     "sourceMap": true,
     "outDir": "./dist",
     "rootDir": "./src",
 >>>>>>> marie_feature/files
+=======
+>>>>>>> feature/chatbot-fix
     "incremental": true,
     "skipLibCheck": true,
     "strictNullChecks": true,
     "noImplicitAny": false,
     "strictBindCallApply": false,
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> feature/chatbot-fix
     "forceConsistentCasingInFileNames": true,
     "noFallthroughCasesInSwitch": true,
+    "useDefineForClassFields": false,
     "esModuleInterop": true
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "test"]
+  "include": [
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "test"
+  ]
 }
+<<<<<<< HEAD
 =======
     "forceConsistentCasingInFileNames": false,
     "noFallthroughCasesInSwitch": false,
@@ -41,3 +61,5 @@
   }
 }
 >>>>>>> marie_feature/files
+=======
+>>>>>>> feature/chatbot-fix

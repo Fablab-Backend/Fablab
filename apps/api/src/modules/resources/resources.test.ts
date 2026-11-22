@@ -1,3 +1,5 @@
+import { beforeEach, describe, it } from 'node:test';
+import assert from 'node:assert/strict';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ResourcesService } from './resources.service';
 import { getModelToken } from '@nestjs/mongoose';
@@ -21,6 +23,6 @@ describe('ResourcesService', () => {
   });
 
   it('devrait être défini', () => {
-    expect(service).toBeDefined();
+    assert.ok(service);
   });
 });
