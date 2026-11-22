@@ -1,5 +1,15 @@
 {
   "name": "@fablab/api",
   "private": true,
-  "version": "1.0.0"
+  "version": "1.0.0",
+  "dependencies": {
+    "@nestjs/mongoose": "^12.0.1",
+    "mongoose": "^9.12.2"
+  },
+  "devDependencies": {
+    "@nestjs/testing": "^12.6.0",
+    "@types/jest": "^30.0.0",
+    "jest": "^30.5.2",
+    "ts-jest": "^29.4.15"
+  }
 }
