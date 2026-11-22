@@ -7,9 +7,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { ResourceType } from '../resources/resources.model';
 import { ResourcesService } from '../resources/resources.service';
-import { ResourceQueryDto } from '../resources/resources.validation';
 import { UserDocument } from '../users/users.model';
 import { AI_PROVIDER, AiProvider } from './chatbot.ai';
 import { FAQ, FaqEntry, normalize } from './chatbot.faq';
@@ -18,6 +16,21 @@ import { ChatMessageDto } from './chatbot.validation';
 
 const MAX_MESSAGES_PER_MINUTE = 10;
 const MAX_RESULTS = 5;
+
+/** Valeurs du discriminant `type` des ressources (voir resources.model.ts). */
+const ROOM_TYPE = 'Room';
+const EQUIPMENT_TYPE = 'Equipment';
+
+/** Champs d'une ressource utilisés par le chatbot (ResourcesService.findAll renvoie des documents Mongoose). */
+interface ResourceLike {
+  _id?: unknown;
+  id?: string;
+  name: string;
+  description?: string;
+  type: string;
+  capacity?: number;
+  isActive?: boolean;
+}
 
 /** Mots ignorés pour trouver le mot-clé de recherche (sans accents). */
 const STOP_WORDS = new Set([
@@ -82,7 +95,7 @@ export class ChatbotService {
       intent === ChatIntent.SEARCH_RESOURCE ||
       intent === ChatIntent.AVAILABILITY
     ) {
-      resources = await this.searchResources(dto.message, text, user);
+      resources = await this.searchResources(dto.message, text);
     }
 
     const date = this.extractDate(text);
@@ -154,27 +167,35 @@ export class ChatbotService {
   private async searchResources(
     original: string,
     text: string,
-    user: UserDocument,
   ): Promise<ResourceSummary[]> {
-    const query: ResourceQueryDto = { page: 1, limit: MAX_RESULTS };
+    const query: { type?: string; minCapacity?: number } = {};
 
-    if (/\bsalles?\b/.test(text)) query.type = ResourceType.ROOM;
-    else if (EQUIPMENT_WORDS.test(text)) query.type = ResourceType.EQUIPMENT;
+    if (/\bsalles?\b/.test(text)) query.type = ROOM_TYPE;
+    else if (EQUIPMENT_WORDS.test(text)) query.type = EQUIPMENT_TYPE;
 
     const capacity = text.match(/(\d{1,4})\s*(personnes?|places?|pers)\b/);
-    if (capacity) query.minCapacity = Number(capacity[1]);
+    if (capacity && query.type !== EQUIPMENT_TYPE) {
+      query.minCapacity = Number(capacity[1]);
+    }
 
     const keyword = this.extractKeyword(original);
-    if (keyword) query.search = keyword;
+    const found = await this.resourcesService.findAll(query);
 
-    // Passe par ResourcesService : les droits (ressources actives seulement pour un utilisateur) sont respectés.
-    const result = await this.resourcesService.findAll(query, user);
-    return result.items.map((item) => ({
-      id: item.id,
-      name: item.name,
-      type: item.type,
-      capacity: item.capacity,
-    }));
+    // findAll ne filtre ni les ressources inactives ni le mot-clé : on le fait ici.
+    return (found as unknown as ResourceLike[])
+      .filter((r) => r.isActive !== false)
+      .filter(
+        (r) =>
+          !keyword ||
+          normalize(`${r.name} ${r.description ?? ''}`).includes(normalize(keyword)),
+      )
+      .slice(0, MAX_RESULTS)
+      .map((r) => ({
+        id: String(r._id ?? r.id),
+        name: r.name,
+        type: r.type,
+        capacity: r.capacity,
+      }));
   }
 
   /** Mot le plus long qui n'est pas un mot courant (ex. « alpha » dans « salle Alpha »). */
@@ -228,7 +249,7 @@ export class ChatbotService {
   }
 
   private describe(resource: ResourceSummary): string {
-    if (resource.type === ResourceType.ROOM) {
+    if (resource.type === ROOM_TYPE) {
       return `${resource.name} (salle${resource.capacity ? `, ${resource.capacity} places` : ''})`;
     }
     return `${resource.name} (équipement)`;

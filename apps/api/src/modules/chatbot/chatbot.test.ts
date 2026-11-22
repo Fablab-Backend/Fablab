@@ -14,15 +14,27 @@ const user = {
   role: UserRole.UTILISATEUR,
 } as unknown as UserDocument;
 
-const SALLE_ALPHA = { id: 'r1', name: 'Salle Alpha', type: 'room', capacity: 12 };
+// Ressources telles que renvoyées par ResourcesService.findAll (type = 'Room' | 'Equipment')
+const SALLE_ALPHA = {
+  _id: 'r1',
+  name: 'Salle Alpha',
+  type: 'Room',
+  capacity: 12,
+  isActive: true,
+};
+const SALLE_BETA = {
+  _id: 'r2',
+  name: 'Salle Beta',
+  type: 'Room',
+  capacity: 8,
+  isActive: true,
+};
 
-type FindAllResult = { items: Array<Record<string, unknown>> };
+type Resource = Record<string, unknown>;
 
 function makeService(ai: Record<string, unknown> = {}) {
   const resourcesService = {
-    findAll: mock.fn<(query?: unknown, user?: unknown) => Promise<FindAllResult>>(
-      async () => ({ items: [] }),
-    ),
+    findAll: mock.fn<(query?: unknown) => Promise<Resource[]>>(async () => []),
   };
   const chatModel = {
     create: mock.fn<(doc?: unknown) => Promise<unknown>>(async () => ({})),
@@ -56,7 +68,7 @@ describe('ChatbotService : FAQ', () => {
     assert.equal(chatModel.create.mock.callCount(), 1);
   });
 
-  it('répond par un message d\'aide quand la demande est inconnue', async () => {
+  it("répond par un message d'aide quand la demande est inconnue", async () => {
     const { service } = makeService();
 
     const result = await service.handleMessage(user, { message: 'blabla xyz' });
@@ -69,9 +81,7 @@ describe('ChatbotService : FAQ', () => {
 describe('ChatbotService : recherche de ressources', () => {
   it('cherche des salles selon le nombre de personnes', async () => {
     const { service, resourcesService } = makeService();
-    resourcesService.findAll.mock.mockImplementation(async () => ({
-      items: [SALLE_ALPHA],
-    }));
+    resourcesService.findAll.mock.mockImplementation(async () => [SALLE_ALPHA]);
 
     const result = await service.handleMessage(user, {
       message: 'Je cherche une salle pour 10 personnes',
@@ -79,19 +89,45 @@ describe('ChatbotService : recherche de ressources', () => {
 
     assert.equal(result.intent, ChatIntent.SEARCH_RESOURCE);
     assert.deepEqual(resourcesService.findAll.mock.calls[0].arguments[0], {
-      page: 1,
-      limit: 5,
-      type: 'room',
+      type: 'Room',
       minCapacity: 10,
     });
     assert.match(result.reply, /Salle Alpha/);
   });
 
-  it('propose d\'ouvrir le formulaire de réservation SANS réserver (confirmation requise)', async () => {
+  it('filtre sur le mot-clé du message (nom de la ressource)', async () => {
     const { service, resourcesService } = makeService();
-    resourcesService.findAll.mock.mockImplementation(async () => ({
-      items: [SALLE_ALPHA],
-    }));
+    resourcesService.findAll.mock.mockImplementation(async () => [
+      SALLE_ALPHA,
+      SALLE_BETA,
+    ]);
+
+    const result = await service.handleMessage(user, { message: 'la salle Beta' });
+
+    assert.equal(result.resources?.length, 1);
+    assert.equal(result.resources?.[0].name, 'Salle Beta');
+  });
+
+  it('ne propose jamais une ressource inactive', async () => {
+    const { service, resourcesService } = makeService();
+    resourcesService.findAll.mock.mockImplementation(async () => [
+      SALLE_ALPHA,
+      { ...SALLE_BETA, isActive: false },
+    ]);
+
+    const result = await service.handleMessage(user, {
+      message: 'je cherche une salle',
+    });
+
+    assert.deepEqual(
+      result.resources?.map((r) => r.id),
+      ['r1'],
+    );
+  });
+
+  it("propose d'ouvrir le formulaire de réservation SANS réserver (confirmation requise)", async () => {
+    const { service, resourcesService } = makeService();
+    resourcesService.findAll.mock.mockImplementation(async () => [SALLE_ALPHA]);
 
     const result = await service.handleMessage(user, {
       message: 'Je veux réserver la salle Alpha',
@@ -104,9 +140,7 @@ describe('ChatbotService : recherche de ressources', () => {
 
   it('gère une demande de disponibilité', async () => {
     const { service, resourcesService } = makeService();
-    resourcesService.findAll.mock.mockImplementation(async () => ({
-      items: [SALLE_ALPHA],
-    }));
+    resourcesService.findAll.mock.mockImplementation(async () => [SALLE_ALPHA]);
 
     const result = await service.handleMessage(user, {
       message: 'La salle Alpha est-elle disponible demain ?',
@@ -119,7 +153,7 @@ describe('ChatbotService : recherche de ressources', () => {
 });
 
 describe('ChatbotService : IA', () => {
-  it('utilise la réponse de l\'IA quand elle est activée', async () => {
+  it("utilise la réponse de l'IA quand elle est activée", async () => {
     const { service, aiProvider } = makeService({ enabled: true });
 
     const result = await service.handleMessage(user, {
@@ -130,7 +164,7 @@ describe('ChatbotService : IA', () => {
     assert.equal(aiProvider.complete.mock.callCount(), 1);
   });
 
-  it('retombe sur la réponse par règles quand l\'IA est en panne', async () => {
+  it("retombe sur la réponse par règles quand l'IA est en panne", async () => {
     const { service, aiProvider } = makeService({ enabled: true });
     aiProvider.complete.mock.mockImplementation(async () => {
       throw new Error('IA indisponible');
