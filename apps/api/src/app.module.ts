@@ -12,6 +12,7 @@ import { RolesGuard } from './common/guards/roles.guard';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { ChatbotModule } from './modules/chatbot/chatbot.module';
+import { LoansModule } from './modules/loans/loans.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { ChatbotModule } from './modules/chatbot/chatbot.module';
     AdminModule,
     NotificationsModule,
     ChatbotModule,
+    LoansModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },
