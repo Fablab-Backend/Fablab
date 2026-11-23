@@ -13,5 +13,3 @@ import { ReservationsService } from './reservations.service';
   exports: [ReservationsService],
 })
 export class ReservationsModule {}
-// Empêche les doublons exacts au niveau de la base de données
-ReservationSchema.index({ resourceId: 1, startTime: 1, endTime: 1 }, { unique: true });

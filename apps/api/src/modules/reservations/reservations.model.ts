@@ -17,10 +17,10 @@ export class Reservation extends Document {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   userId!: Types.ObjectId;
 
-  @Prop({ required: true })
+  @Prop({ type: Date, required: true })
   startTime!: Date;
 
-  @Prop({ required: true })
+  @Prop({ type: Date, required: true })
   endTime!: Date;
 
   @Prop({ type: String, enum: Object.values(ReservationStatus), default: ReservationStatus.PENDING })
