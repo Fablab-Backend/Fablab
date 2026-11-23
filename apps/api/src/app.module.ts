@@ -14,6 +14,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { ChatbotModule } from './modules/chatbot/chatbot.module';
 import { LoansModule } from './modules/loans/loans.module';
 import { JobsModule } from './jobs/jobs.module';
+import { CollaborationModule } from './modules/collaboration/collaboration.module';
 
 import { ReservationsModule } from './modules/reservations/reservations.module';
 import { AvailabilityModule } from './modules/availability/availability.module';
@@ -35,6 +36,7 @@ import { AvailabilityModule } from './modules/availability/availability.module';
     JobsModule,
     ReservationsModule,
     AvailabilityModule,
+    CollaborationModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },
