@@ -13,8 +13,13 @@ import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { ChatbotModule } from './modules/chatbot/chatbot.module';
 import { LoansModule } from './modules/loans/loans.module';
+<<<<<<< HEAD
 import { JobsModule } from './jobs/jobs.module';
 
+=======
+import { ReservationsModule } from './modules/reservations/reservations.module';
+import { AvailabilityModule } from './modules/availability/availability.module';
+>>>>>>> 1f642e2cd93e98a8bcec0e2753542c3d16c8c65e
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -30,7 +35,12 @@ import { JobsModule } from './jobs/jobs.module';
     NotificationsModule,
     ChatbotModule,
     LoansModule,
+<<<<<<< HEAD
     JobsModule,
+=======
+    ReservationsModule,
+    AvailabilityModule,
+>>>>>>> 1f642e2cd93e98a8bcec0e2753542c3d16c8c65e
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },
