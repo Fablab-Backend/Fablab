@@ -1,282 +1,430 @@
 # Plateforme FabLab
 
-Plateforme de réservation de salles et de prêt de matériel pour FabLab.
+> Plateforme de **réservation de salles** et de **prêt de matériel** pour FabLab.  
+> API REST NestJS · MongoDB · JWT · Chatbot IA · Notifications e-mail
 
-Monorepo npm workspaces :
+---
 
-| Chemin               | Contenu                                                        |
-| -------------------- | -------------------------------------------------------------- |
-| `apps/api`           | API backend — Node.js, NestJS, MongoDB (Mongoose)              |
-| `apps/web`           | Frontend React (squelette, voir `apps/web/README.md`)          |
-| `packages/shared`    | Types et constantes partagés entre front et back               |
-| `infra`              | Infrastructure (Docker, Nginx, Compose)                        |
-| `docs`               | Documentation                                                  |
+## Table des matières
+
+1. [Structure du projet](#structure-du-projet)
+2. [Prérequis](#prérequis)
+3. [Installation](#installation)
+4. [Configuration](#configuration)
+5. [Démarrage](#démarrage)
+6. [Tests](#tests)
+7. [Architecture de l'API](#architecture-de-lapi)
+8. [Rôles et autorisations](#rôles-et-autorisations)
+9. [Routes API](#routes-api)
+10. [Modules métier](#modules-métier)
+11. [Jobs planifiés](#jobs-planifiés)
+12. [Infrastructure](#infrastructure)
+13. [Création du compte administrateur](#création-du-compte-administrateur)
+14. [Guide d'intégration frontend](#guide-dintégration-frontend)
+15. [Journal d'audit](#journal-daudit)
+
+---
+
+## Structure du projet
+
+Monorepo **npm workspaces** :
+
+```
+plateforme-fablab/
+├── apps/
+│   ├── api/          # Backend — NestJS, MongoDB (Mongoose)
+│   └── web/          # Frontend React (squelette)
+├── packages/
+│   └── shared/       # Types et constantes partagés front/back
+├── infra/
+│   ├── compose.yaml  # MongoDB 7 + Redis 7 (Docker Compose)
+│   ├── docker/       # Dockerfiles
+│   ├── nginx/        # Reverse proxy
+│   └── deploy/       # Scripts de déploiement
+├── docs/             # Documentation fonctionnelle par module
+├── .env.example      # Modèle de configuration
+└── package.json      # Racine du monorepo
+```
+
+---
 
 ## Prérequis
 
-- **Node.js** >= 20 (voir `.nvmrc`)
-- **npm** >= 9
-- **MongoDB** accessible (instance locale ou distante)
+| Outil | Version minimale |
+|-------|-----------------|
+| **Node.js** | >= 20 (voir `.nvmrc`) |
+| **npm** | >= 9 |
+| **MongoDB** | 7 (local ou distant) |
+| **Redis** | 7 (optionnel — verrou des jobs planifiés) |
+| **Docker** | Recommandé pour MongoDB + Redis en local |
+
+---
 
 ## Installation
 
 ```bash
-# Depuis la racine du monorepo
+# Depuis la racine du monorepo — installe toutes les dépendances (api, web, shared)
 npm install
 ```
 
-Toutes les dépendances des workspaces (`apps/*`, `packages/*`) sont installées en une seule commande.
+---
 
 ## Configuration
 
-Créer le fichier `.env` à la racine du projet à partir du modèle :
+Copier le modèle d'environnement et renseigner les valeurs :
 
 ```bash
 cp .env.example .env
 ```
 
-| Variable          | Description                                            | Obligatoire | Défaut                        |
-| ----------------- | ------------------------------------------------------ | ----------- | ----------------------------- |
-| `NODE_ENV`        | Environnement d'exécution (`development`, `production`)| Non         | `development`                 |
-| `PORT`            | Port HTTP de l'API                                     | Non         | `3000`                        |
-| `MONGODB_URI`     | URI de connexion MongoDB                               | Oui         | `mongodb://localhost:27017/fablab` |
-| `JWT_SECRET`      | Secret de signature des jetons JWT                     | **Oui**     | —                             |
-| `JWT_EXPIRES_IN`  | Durée de vie d'un jeton JWT                            | Non         | `8h`                          |
-| `REDIS_URL`       | URL Redis (verrou des jobs planifiés ; sans Redis, les jobs sont sautés) | Non         | —                             |
-| `AI_API_KEY`      | Clé API pour le module chatbot                         | Non         | —                             |
-| `SMTP_HOST`       | Hôte SMTP (notifications e-mail)                       | Non         | —                             |
-| `SMTP_USER`       | Utilisateur SMTP                                        | Non         | —                             |
-| `SMTP_PASS`       | Mot de passe SMTP                                       | Non         | —                             |
-| `MAIL_FROM`       | Adresse d'expédition des e-mails                        | Non         | —                             |
-| `LOAN_MAX_DAYS`   | Durée maximale d'un prêt (jours)                        | Non         | `14`                          |
+| Variable | Obligatoire | Défaut | Description |
+|----------|:-----------:|--------|-------------|
+| `NODE_ENV` | Non | `development` | Environnement (`development` / `production`) |
+| `PORT` | Non | `3000` | Port HTTP de l'API |
+| `MONGODB_URI` | **Oui** | `mongodb://localhost:27017/fablab` | URI de connexion MongoDB |
+| `JWT_SECRET` | **Oui** | — | Secret de signature des jetons JWT (chaîne longue et aléatoire) |
+| `JWT_EXPIRES_IN` | Non | `8h` | Durée de vie d'un jeton JWT |
+| `REDIS_URL` | Non | — | URL Redis — verrou des jobs planifiés (sans Redis, les jobs sont sautés) |
+| `AI_API_KEY` | Non | — | Clé API Anthropic — active le chatbot IA (sans clé : réponses par règles) |
+| `AI_MODEL` | Non | `claude-haiku-5-5` | Modèle Anthropic utilisé par le chatbot |
+| `SMTP_HOST` | Non | — | Hôte SMTP pour les notifications e-mail |
+| `SMTP_USER` | Non | — | Utilisateur SMTP |
+| `SMTP_PASS` | Non | — | Mot de passe SMTP |
+| `MAIL_FROM` | Non | — | Adresse d'expédition des e-mails |
+| `LOAN_MAX_DAYS` | Non | `14` | Durée maximale d'un prêt (jours) |
 
-> **Sécurité** : ne jamais committer le fichier `.env` ni aucune valeur secrète.
-> `JWT_SECRET` doit être une chaîne longue et aléatoire, différente par environnement.
+> [!CAUTION]
+> Ne jamais committer `.env` ni aucune valeur secrète.  
+> `JWT_SECRET` doit être différent par environnement.
 
-## Démarrage de l'API
+---
 
-L'API est exposée sous le préfixe global `/api` (port `3000` par défaut).
+## Démarrage
 
 ```bash
-# Mode développement (watch) — depuis la racine
-npm run start:dev --workspace @fablab/api
+# 1. Lancer MongoDB et Redis (Docker)
+docker compose -f infra/compose.yaml up -d
 
-# Équivalent depuis apps/api
-cd apps/api && npm run start:dev
+# 2. Créer le compte administrateur (première fois)
+ADMIN_EMAIL=admin@example.org ADMIN_PASSWORD='<mot-de-passe-fort>' \
+  node apps/api/scripts/seed-admin.js
 
-# Mode production (nécessite un build préalable)
-npm run build --workspace @fablab/api
+# 3. Démarrer l'API en mode développement (watch)
+npm run start:dev
+
+# L'API répond sur http://localhost:3000/api
+```
+
+```bash
+# Mode production
+npm run build
 npm run start:prod --workspace @fablab/api
 ```
 
-L'API répond alors sur `http://localhost:3000/api`.
+> [!NOTE]
+> L'API est exposée sous le préfixe global `/api`.  
+> `GET http://localhost:3000/api/health` retourne l'état de l'API et de la connexion MongoDB.
+
+---
 
 ## Tests
 
-Les tests unitaires utilisent le runner natif **`node:test`** de Node.js (aucun framework externe).
+Les tests unitaires utilisent le runner natif **`node:test`** de Node.js — aucun framework externe.
 
 ```bash
-# Depuis la racine du monorepo — exécute les 16 fichiers *.test.ts de apps/api
+# Depuis la racine — exécute tous les fichiers *.test.ts de apps/api
 npm test
 
-# Équivalent
+# Équivalent explicite
 npm run test --workspace @fablab/api
 ```
 
-> Les tests s'exécutent via `ts-node` et nécessitent que la commande soit lancée
-> avec `apps/api` comme répertoire de travail (c'est le cas des scripts npm ci-dessus),
-> afin que `apps/api/tsconfig.json` soit pris en compte.
-
-## Modules métier
-
-L'API est organisée en modules NestJS sous `apps/api/src/modules` :
-
-| Module            | Rôle                                                        |
-| ----------------- | ----------------------------------------------------------- |
-| `auth`            | Connexion JWT, session, garde d'authentification            |
-| `users`           | Comptes utilisateurs, profils, changement de mot de passe   |
-| `admin`           | Statistiques, paramètres de la plateforme                   |
-| `audit`           | Journal des actions sensibles (`auditLogs`)                 |
-| `resources`       | Ressources du FabLab : salles et équipements (modèle discriminé) |
-| `reservations`    | Réservation des salles et des équipements                  |
-| `availability`    | Disponibilités et créneaux                                  |
-| `loans`           | Prêts de matériel (durée max configurable via `LOAN_MAX_DAYS`) |
-| `locations`       | Sites et localisation des ressources                        |
-| `organizations`   | Organisations / structures utilisatrices                    |
-| `files`           | Upload de fichiers (Multer) et métadonnées associées        |
-| `notifications`   | Notifications (e-mail via SMTP, journal des événements)     |
-| `chatbot`         | Assistant conversationnel (intégration LLM, `AI_API_KEY`)   |
-| `collaboration`   | Fonctionnalités collaboratives                              |
-
-Chaque module suit la structure standard NestJS : `*.module.ts`, `*.controller.ts`,
-`*.service.ts`, `*.model.ts`, `*.validation.ts` et `*.test.ts`.
-
-## Infrastructure
-
-`infra/` contient la configuration de déploiement :
-
-- `compose.yaml` — MongoDB 7 et Redis 7 en conteneurs (volume `mongo_data`)
-- `docker/` — Dockerfiles de l'API et du frontend
-- `nginx/` — configuration du reverse proxy
-- `deploy/` — scripts et fichiers de déploiement
-
-```bash
-# Démarrer MongoDB et Redis localement
-docker compose -f infra/compose.yaml up -d
+```
+ℹ tests 108
+ℹ pass  107
+ℹ fail    0
 ```
 
-## Documentation
+> [!TIP]
+> Les tests s'exécutent via `ts-node` et utilisent `apps/api/tsconfig.json`.  
+> Chaque module dispose de son propre `*.test.ts` testant le service en isolation
+> avec des mocks — aucune base de données réelle n'est requise.
 
-- `docs/` — documentation fonctionnelle par module (`loans.md`, `notifications.md`, …)
-- `packages/shared` — types et constantes partagés entre le front et le back
+---
+
+## Architecture de l'API
+
+```
+apps/api/src/
+├── common/
+│   ├── decorators/   # @Public(), @Roles(), @CurrentUser()
+│   ├── enums/        # UserRole
+│   ├── filters/      # HttpExceptionFilter (format d'erreur uniforme)
+│   └── guards/       # JwtAuthGuard (global), RolesGuard (global)
+├── database/         # Connexion Mongoose
+├── health/           # GET /api/health
+├── jobs/             # Jobs planifiés (LoanOverdueJob, LoanReminderJob)
+└── modules/
+    ├── admin/        ├── audit/        ├── auth/
+    ├── availability/ ├── chatbot/      ├── collaboration/
+    ├── files/        ├── loans/        ├── locations/
+    ├── notifications/├── organizations/├── reservations/
+    ├── resources/    └── users/
+```
+
+**Flux d'une requête :**
+
+```mermaid
+sequenceDiagram
+    Client->>JwtAuthGuard: Authorization: Bearer <token>
+    JwtAuthGuard->>DB: Vérifier que le compte est actif
+    JwtAuthGuard->>RolesGuard: request.user
+    RolesGuard->>Controller: Rôle autorisé
+    Controller->>Service: Logique métier
+    Service-->>Controller: Résultat
+    Controller-->>Client: Réponse JSON
+```
+
+---
 
 ## Rôles et autorisations
 
-Trois rôles officiels, définis dans `packages/shared` et `apps/api/src/common/enums/user-role.enum.ts` :
+| Rôle | Création | Accès |
+|------|----------|-------|
+| `Utilisateur` | Défaut à l'inscription | Ses propres ressources (prêts, profil, notifications) |
+| `Responsable` | Attribué par un Admin | Gestion des ressources, réservations, retours de prêts |
+| `Administrateur` | Seed ou Admin | Tout — comptes, rôles, paramètres, journal d'audit |
 
-- **`Utilisateur`** — rôle par défaut à la création d'un compte.
-- **`Responsable`** — gestion des ressources et des réservations.
-- **`Administrateur`** — gestion des comptes, des rôles, des paramètres et du journal d'audit.
+**Mécanismes de sécurité :**
 
-Mécanismes de sécurité :
+- Authentification par **JWT** (`Authorization: Bearer <token>`), vérification en base à chaque requête que le compte est actif.
+- `JwtAuthGuard` et `RolesGuard` appliqués **globalement** ; les routes publiques sont décorées `@Public()`.
+- Mots de passe hachés avec **bcrypt**, jamais exposés par l'API.
+- Toutes les entrées validées (`class-validator` + `ValidationPipe` global).
+- Format d'erreur uniforme : `{ statusCode, message, error, path, timestamp }`.
 
-- Authentification par **JWT** (`Authorization: Bearer <token>`), avec vérification en base que le compte est actif à chaque requête.
-- `JwtAuthGuard` et `RolesGuard` appliqués **globalement** ; les routes publiques sont marquées `@Public()` (`/api/auth/login`, `/api/health`).
-- Les restrictions de rôle utilisent `@Roles(...)`.
-- Les mots de passe sont hachés avec **bcrypt** et jamais exposés par l'API.
-- Toutes les entrures sont validées (`class-validator` + `ValidationPipe` global).
-- Les erreurs suivent un format uniforme (`statusCode`, `message`, `error`, `path`, `timestamp`).
+> [!IMPORTANT]
+> **Déconnexion** : `POST /api/auth/logout` journalise l'action mais **ne révoque pas le JWT**.
+> Le token reste valide jusqu'à son expiration (`JWT_EXPIRES_IN`).
+> Il n'existe pas encore de blacklist ni de session serveur.
 
-### Authentification et session
-
-> **Important — déconnexion** : `POST /api/auth/logout` enregistre l'action
-> `auth.logout` dans le journal d'audit, mais **ne révoque pas le jeton JWT**.
-> Le token reste valide jusqu'à son expiration (`JWT_EXPIRES_IN`). Il n'existe
-> pas encore de blacklist ni de session serveur.
+---
 
 ## Routes API
 
-| Méthode | Route                      | Accès                 | Description                                |
-| ------- | -------------------------- | --------------------- | ------------------------------------------ |
-| GET     | `/api/health`              | Public                | État de l'API et de la connexion MongoDB   |
-| POST    | `/api/auth/login`          | Public                | Connexion → `{ accessToken, tokenType, user }` |
-| POST    | `/api/auth/logout`         | Authentifié           | Déconnexion (journalisée, voir ci-dessus)  |
-| GET     | `/api/me`                  | Authentifié           | Profil de l'utilisateur connecté           |
-| GET     | `/api/users`               | Administrateur        | Liste paginée des utilisateurs             |
-| POST    | `/api/users`               | Administrateur        | Création d'un compte                       |
-| GET     | `/api/users/:id`           | Administrateur        | Détail d'un utilisateur                    |
-| GET     | `/api/users/me`            | Authentifié           | Son propre profil                          |
-| PATCH   | `/api/users/me`            | Authentifié           | Modifier son profil (nom, téléphone, etc.) |
-| PATCH   | `/api/users/me/password`   | Authentifié           | Changer son mot de passe                   |
-| PATCH   | `/api/users/:id`           | Administrateur        | Modifier rôle, activation, profil          |
-| GET     | `/api/audit-logs`          | Administrateur        | Journal des actions (filtres, pagination)  |
-| GET     | `/api/admin/stats`         | Administrateur        | Statistiques de la plateforme              |
-| GET     | `/api/admin/settings`      | Administrateur        | Paramètres de configuration                |
-| PUT     | `/api/admin/settings`      | Administrateur        | Mise à jour des paramètres                 |
-| GET     | `/api/resources`           | Authentifié           | Liste des ressources (salles et équipements, avec filtres) |
-| GET     | `/api/resources/:id`       | Authentifié           | Détail d'une ressource                     |
-| POST    | `/api/resources/rooms`     | Responsable, Admin    | Créer une salle                            |
-| POST    | `/api/resources/equipments`| Responsable, Admin    | Créer un équipement                        |
-| PATCH   | `/api/resources/:id`       | Responsable, Admin    | Modifier une ressource                     |
-| DELETE  | `/api/resources/:id`       | Responsable, Admin    | Supprimer une ressource                    |
-| GET     | `/api/loans`               | Authentifié           | Liste des prêts (un utilisateur ne voit que les siens) |
-| POST    | `/api/loans`               | Authentifié           | Créer un prêt (voir `docs/loans.md`)       |
-| POST    | `/api/loans/:id/return`    | Responsable, Admin    | Enregistrer le retour d'un prêt            |
-| GET     | `/api/notifications`       | Authentifié           | Notifications de l'utilisateur connecté (pagination, `unreadOnly`) |
-| POST    | `/api/chatbot/message`     | Authentifié           | Envoyer un message au chatbot (`{ message }`, 1 à 500 caractères, 10 messages/minute max) |
-| POST    | `/api/files/upload`        | Responsable, Admin    | Upload d'un fichier (multipart)            |
-| GET     | `/api/organizations`       | Authentifié           | Liste des organisations                    |
-| GET     | `/api/organizations/:id`   | Authentifié           | Détail d'une organisation                  |
-| POST    | `/api/organizations`       | Administrateur        | Créer une organisation                     |
+### Authentification & Profil
 
-> **Routes pas encore exposées** : les modules `reservations`, `availability`,
-> `locations` et `collaboration` ont leur logique métier (services, modèles, tests)
-> mais **aucun contrôleur** pour l'instant, donc aucune route HTTP. Le front ne peut
-> pas les appeler tant que les contrôleurs ne sont pas écrits côté back.
+| Méthode | Route | Accès | Description |
+|---------|-------|-------|-------------|
+| GET | `/api/health` | Public | État de l'API et de MongoDB |
+| POST | `/api/auth/login` | Public | Connexion → `{ accessToken, tokenType, user }` |
+| POST | `/api/auth/logout` | Authentifié | Déconnexion (journalisée) |
+| GET | `/api/me` | Authentifié | Profil de l'utilisateur connecté |
 
-### Exemples
+### Utilisateurs
+
+| Méthode | Route | Accès | Description |
+|---------|-------|-------|-------------|
+| GET | `/api/users` | Administrateur | Liste paginée des utilisateurs |
+| POST | `/api/users` | Administrateur | Créer un compte |
+| GET | `/api/users/:id` | Administrateur | Détail d'un utilisateur |
+| GET | `/api/users/me` | Authentifié | Son propre profil |
+| PATCH | `/api/users/me` | Authentifié | Modifier son profil (nom, téléphone…) |
+| PATCH | `/api/users/me/password` | Authentifié | Changer son mot de passe |
+| PATCH | `/api/users/:id` | Administrateur | Modifier rôle, activation, profil |
+
+### Ressources (salles & équipements)
+
+| Méthode | Route | Accès | Description |
+|---------|-------|-------|-------------|
+| GET | `/api/resources` | Authentifié | Liste des ressources (avec filtres) |
+| GET | `/api/resources/:id` | Authentifié | Détail d'une ressource |
+| POST | `/api/resources/rooms` | Responsable, Admin | Créer une salle |
+| POST | `/api/resources/equipments` | Responsable, Admin | Créer un équipement |
+| PATCH | `/api/resources/:id` | Responsable, Admin | Modifier une ressource |
+| DELETE | `/api/resources/:id` | Responsable, Admin | Supprimer une ressource |
+
+### Prêts de matériel
+
+| Méthode | Route | Accès | Description |
+|---------|-------|-------|-------------|
+| GET | `/api/loans` | Authentifié | Liste des prêts (un utilisateur ne voit que les siens) |
+| POST | `/api/loans` | Authentifié | Créer un prêt |
+| POST | `/api/loans/:id/return` | Responsable, Admin | Enregistrer le retour |
+
+> Paramètres `GET /api/loans` : `page` (défaut `1`), `limit` (défaut `20`), `status` (`ACTIVE` / `RETURNED` / `OVERDUE`), `equipmentId`.
+
+### Notifications
+
+| Méthode | Route | Accès | Description |
+|---------|-------|-------|-------------|
+| GET | `/api/notifications` | Authentifié | Notifications de l'utilisateur (`page`, `limit`, `unreadOnly`) |
+
+### Chatbot
+
+| Méthode | Route | Accès | Description |
+|---------|-------|-------|-------------|
+| POST | `/api/chatbot/message` | Authentifié | Envoyer un message (`{ message }`, 1–500 caractères, max 10/minute) |
+
+### Administration
+
+| Méthode | Route | Accès | Description |
+|---------|-------|-------|-------------|
+| GET | `/api/audit-logs` | Administrateur | Journal des actions (filtres, pagination) |
+| GET | `/api/admin/stats` | Administrateur | Statistiques de la plateforme |
+| GET | `/api/admin/settings` | Administrateur | Paramètres de configuration |
+| PUT | `/api/admin/settings` | Administrateur | Mettre à jour les paramètres |
+
+### Divers
+
+| Méthode | Route | Accès | Description |
+|---------|-------|-------|-------------|
+| POST | `/api/files/upload` | Responsable, Admin | Upload d'un fichier (multipart) |
+| GET | `/api/organizations` | Authentifié | Liste des organisations |
+| GET | `/api/organizations/:id` | Authentifié | Détail d'une organisation |
+| POST | `/api/organizations` | Administrateur | Créer une organisation |
+
+> [!NOTE]
+> **Routes pas encore exposées** : `reservations`, `availability`, `locations` et `collaboration` ont leur logique métier (services, modèles, tests) mais **aucun contrôleur** pour l'instant — aucune route HTTP accessible depuis le front.
+
+### Exemples curl
 
 ```bash
 # Connexion
 curl -X POST http://localhost:3000/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"<email>","password":"<mot-de-passe>"}'
+  -d '{"email":"admin@example.org","password":"<mot-de-passe>"}'
 
-# Utilisateur connecté
+# Récupérer son profil
 curl http://localhost:3000/api/me \
   -H "Authorization: Bearer <accessToken>"
 
-# Santé de l'API
+# Vérifier l'état de l'API
 curl http://localhost:3000/api/health
+
+# Lister les ressources
+curl http://localhost:3000/api/resources \
+  -H "Authorization: Bearer <accessToken>"
 ```
 
-## Guide d'intégration pour l'équipe frontend
+---
 
-Cette section explique comment connecter `apps/web` à l'API. La liaison est faite par
-l'équipe front ; l'équipe back fournit l'API et ce guide.
+## Modules métier
 
-### 1. Lancer le back en local
+| Module | Rôle | Tests |
+|--------|------|-------|
+| `auth` | Connexion JWT, session, gardes | ✅ |
+| `users` | Comptes, profils, changement de mot de passe | ✅ |
+| `admin` | Statistiques, paramètres de la plateforme | ✅ |
+| `audit` | Journal des actions sensibles (`auditLogs`) | ✅ |
+| `resources` | Salles et équipements (modèle Mongoose discriminé) | ✅ |
+| `reservations` | Réservation de salles et équipements | ✅ |
+| `availability` | Disponibilités et créneaux | ✅ |
+| `loans` | Prêts de matériel (durée max via `LOAN_MAX_DAYS`) | ✅ |
+| `locations` | Sites et localisation des ressources | ✅ |
+| `organizations` | Organisations / structures utilisatrices | ✅ |
+| `files` | Upload de fichiers (Multer) et métadonnées | ✅ |
+| `notifications` | Notifications in-app et e-mail (SMTP) | ✅ |
+| `chatbot` | Assistant conversationnel (IA Anthropic ou règles) | ✅ |
+| `collaboration` | Annonces et messagerie par ressource | ✅ |
+
+Chaque module suit la structure standard NestJS :
+`*.module.ts` · `*.controller.ts` · `*.service.ts` · `*.model.ts` · `*.validation.ts` · `*.test.ts`
+
+### Chatbot
+
+Le chatbot fonctionne en deux modes :
+
+- **Mode IA** (`AI_API_KEY` présente) : les messages sont enrichis du contexte (ressources trouvées, FAQ) puis envoyés au modèle Anthropic.
+- **Mode règles** (par défaut, sans clé) : correspondance FAQ + extraction d'intention + recherche de ressources.
+
+Le chatbot **ne réserve jamais** — il propose d'ouvrir le formulaire de réservation ; la confirmation est toujours côté utilisateur. Limite : 10 messages par minute par utilisateur (HTTP 429 au-delà).
+
+---
+
+## Jobs planifiés
+
+| Job | Fréquence | Rôle |
+|-----|-----------|------|
+| `LoanOverdueJob` | Toutes les heures | Passe les prêts échus en `OVERDUE` et notifie l'emprunteur (une seule notification par 24 h) |
+| `LoanReminderJob` | Toutes les heures | Envoie un rappel `LOAN_REMINDER` pour les prêts dont le retour est prévu dans les 48 h |
+
+Les jobs utilisent **Redis** comme verrou distribué (`RedisLockService`) : si Redis est indisponible, le job est sauté (aucune exception propagée).
+
+---
+
+## Infrastructure
 
 ```bash
-npm install                                     # à la racine
-cp .env.example .env                            # puis renseigner JWT_SECRET
-docker compose -f infra/compose.yaml up -d      # MongoDB (et Redis, optionnel)
-ADMIN_EMAIL=admin@example.org ADMIN_PASSWORD='<mot-de-passe-fort>' \
-  node apps/api/scripts/seed-admin.js           # crée le compte administrateur
-npm run start:dev                               # API sur http://localhost:3000/api
+# Démarrer MongoDB 7 et Redis 7 en local
+docker compose -f infra/compose.yaml up -d
+
+# Arrêter
+docker compose -f infra/compose.yaml down
 ```
 
-Vérifier que l'API répond : `curl http://localhost:3000/api/health`.
+Le volume `mongo_data` persiste les données entre les redémarrages.
 
-### 2. Configurer l'URL de l'API
+```
+infra/
+├── compose.yaml     # MongoDB 7 (port 27017) + Redis 7 (port 6379)
+├── docker/          # Dockerfiles de l'API et du frontend
+├── nginx/           # Configuration du reverse proxy
+└── deploy/          # Scripts de déploiement
+```
 
-Ne pas écrire l'URL en dur dans le code. Utiliser une variable d'environnement dans
-`apps/web/.env`. Le nom et la façon de la lire dépendent de l'outil de build du front :
+---
 
-| Outil                | Variable                                      | Lecture dans le code                    |
-| -------------------- | --------------------------------------------- | --------------------------------------- |
-| Vite                 | `VITE_API_URL=http://localhost:3000/api`      | `import.meta.env.VITE_API_URL`          |
-| Create React App     | `REACT_APP_API_URL=http://localhost:3000/api` | `process.env.REACT_APP_API_URL`         |
-| Next.js              | `NEXT_PUBLIC_API_URL=http://localhost:3000/api` | `process.env.NEXT_PUBLIC_API_URL`     |
+## Création du compte administrateur
 
-> Seules les variables avec ces préfixes (`VITE_`, `REACT_APP_`, `NEXT_PUBLIC_`) sont
-> visibles dans le navigateur. Redémarrer le serveur de développement après toute
-> modification du `.env`.
+Un script de seed crée le **premier** compte `Administrateur` (idempotent) :
 
-**Si le front passe par un serveur Node.js** (Express, Next.js côté serveur…) : le
-navigateur n'est alors plus obligé d'appeler l'API directement. Le serveur du front peut
-relayer les requêtes vers `http://localhost:3000/api` (proxy). Cela évite les soucis de
-CORS, mais le principe reste identique : l'API attend toujours l'en-tête
-`Authorization: Bearer <accessToken>`. Le JWT reste celui renvoyé par `/api/auth/login`.
+```bash
+ADMIN_EMAIL=admin@example.org \
+ADMIN_PASSWORD='<mot-de-passe-fort>' \
+ADMIN_FIRST_NAME='Prénom' \
+ADMIN_LAST_NAME='Nom' \
+  node apps/api/scripts/seed-admin.js
+```
 
-Pour éviter le CORS en développement sans écrire de serveur, un proxy suffit :
-`server.proxy` dans `vite.config.ts`, ou `"proxy": "http://localhost:3000"` dans le
-`package.json` de Create React App. Le front appelle alors `/api/...` sur son propre port.
+| Variable | Description |
+|----------|-------------|
+| `ADMIN_EMAIL` | Adresse e-mail du compte |
+| `ADMIN_PASSWORD` | Mot de passe initial |
+| `ADMIN_FIRST_NAME` | Prénom |
+| `ADMIN_LAST_NAME` | Nom |
 
-Toutes les routes sont sous le préfixe `/api`. Le CORS est actuellement ouvert à toutes
-les origines (`enableCors()`) : le front peut tourner sur un autre port (ex. `5173`).
-Il sera restreint à l'adresse du front en production.
+> [!CAUTION]
+> Choisir un mot de passe long et unique. Le changer après la première connexion.
+> Ne jamais committer ces valeurs.
 
-### 3. S'authentifier
+---
 
-1. `POST /api/auth/login` avec `{ "email": "...", "password": "..." }`.
-2. La réponse contient `{ accessToken, tokenType, user }`. Conserver `accessToken`.
-3. Envoyer l'en-tête `Authorization: Bearer <accessToken>` sur toutes les autres routes
-   (seules `/api/auth/login` et `/api/health` sont publiques).
-4. `GET /api/me` renvoie l'utilisateur connecté, avec son rôle, pour adapter l'interface.
+## Guide d'intégration frontend
 
-Le jeton expire après `JWT_EXPIRES_IN` (8 h par défaut). Au-delà, l'API répond 401 :
-renvoyer l'utilisateur vers la page de connexion. La déconnexion supprime le jeton côté
-front (le back ne le révoque pas, voir plus haut).
+> [!NOTE]
+> Le back doit tourner en local avant de démarrer le front. Voir la section [Démarrage](#démarrage) plus haut.
 
-### 4. Client HTTP conseillé
+### 1. Configurer l'URL de l'API
 
-Créer un client unique dans `apps/web/src/lib/` qui ajoute le jeton à chaque requête et
-traite les erreurs au même endroit :
+Dans `apps/web/.env`, déclarer l'URL de l'API selon l'outil de build :
+
+| Outil de build | Variable `.env` | Lecture dans le code |
+|---------------|-----------------|----------------------|
+| Vite | `VITE_API_URL=http://localhost:3000/api` | `import.meta.env.VITE_API_URL` |
+| Create React App | `REACT_APP_API_URL=http://localhost:3000/api` | `process.env.REACT_APP_API_URL` |
+| Next.js | `NEXT_PUBLIC_API_URL=http://localhost:3000/api` | `process.env.NEXT_PUBLIC_API_URL` |
+
+> Le CORS est ouvert à toutes les origines en développement (`enableCors()`).  
+> Pour éviter les problèmes de CORS sans configuration serveur, utiliser un proxy :
+> `server.proxy` dans `vite.config.ts` ou `"proxy": "http://localhost:3000"` dans le `package.json` CRA.
+
+### 2. Client HTTP recommandé
+
+Créer un client unique (ex. `apps/web/src/lib/api.ts`) qui ajoute le token à chaque requête et centralise la gestion des erreurs :
 
 ```ts
-// Adapter la lecture de la variable à l'outil de build (voir le tableau ci-dessus)
-const API = import.meta.env.VITE_API_URL; // Vite
+const API = import.meta.env.VITE_API_URL; // adapter selon l'outil de build
 
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = localStorage.getItem('accessToken');
@@ -288,81 +436,86 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
       ...options.headers,
     },
   });
+
   if (res.status === 401) {
     localStorage.removeItem('accessToken');
     window.location.href = '/login';
+    return undefined as never; // interrompt l'exécution, le redirect est en cours
   }
-  if (!res.ok) throw await res.json(); // { statusCode, message, error, path, timestamp }
+
+  if (!res.ok) {
+    // Corps vide possible sur certains codes → fallback sur un objet minimal
+    const body = await res.text();
+    throw body ? JSON.parse(body) : { statusCode: res.status, message: res.statusText };
+  }
+
   return res.json();
 }
 ```
 
-> Pour l'upload de fichier (`/api/files/upload`), envoyer un `FormData` et **ne pas**
-> fixer l'en-tête `Content-Type` : le navigateur ajoute lui-même la limite multipart.
+> [!NOTE]
+> Pour l'upload (`/api/files/upload`), passer un `FormData` et **ne pas** fixer `Content-Type` — le navigateur ajoute lui-même la limite multipart. Supprimer le header `Content-Type` des options dans ce cas.
 
-### 5. Règles à respecter
+> [!WARNING]
+> `localStorage` est lisible par tout script JS de la page (vulnérable aux XSS).
+> En production, préférer un **cookie `HttpOnly`** géré côté serveur pour stocker le token — le navigateur l'envoie automatiquement et JavaScript ne peut pas le lire.
 
-- **Données strictes** : l'API refuse (400) tout champ non prévu dans le corps d'une
-  requête. N'envoyer que les champs documentés.
-- **Pagination** : les listes d'utilisateurs, de prêts, de notifications et du journal
-  d'audit acceptent `page` (défaut `1`) et `limit` (défaut `20`). `GET /api/resources`
-  n'est pas paginée.
-- **Format d'erreur** : `{ statusCode, message, error, path, timestamp }`. `message` peut
-  être un tableau de chaînes quand plusieurs champs sont invalides.
-- **Codes à gérer** : `400` données invalides, `401` non connecté ou jeton expiré,
-  `403` rôle insuffisant, `404` introuvable, `409` conflit (ex. prêt déjà retourné),
-  `429` trop de messages au chatbot.
-- **Rôles** : `Utilisateur`, `Responsable`, `Administrateur`. Masquer dans l'interface les
-  actions interdites, mais ne pas s'y fier : l'API vérifie toujours le rôle.
-- **Types partagés** : réutiliser les rôles et constantes de `packages/shared` plutôt que
-  de les redéfinir (`import { ... } from '@fablab/shared'`).
-- **Chatbot** : le chatbot propose d'ouvrir un formulaire de réservation mais ne réserve
-  jamais lui-même ; la confirmation passe par l'interface.
+### 3. S'authentifier
 
-### 6. Tester sans le front
+```ts
+// 1. Login — utiliser le client défini ci-dessus
+const { accessToken, user } = await api<{ accessToken: string; user: User }>('/auth/login', {
+  method: 'POST',
+  body: JSON.stringify({ email, password }),
+});
 
-```bash
-TOKEN=$(curl -s -X POST http://localhost:3000/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"<email>","password":"<mot-de-passe>"}' | node -pe "JSON.parse(require('fs').readFileSync(0)).accessToken")
+// 2. Stocker le token
+localStorage.setItem('accessToken', accessToken);
 
-curl http://localhost:3000/api/resources -H "Authorization: Bearer $TOKEN"
+// 3. Récupérer le profil + rôle pour adapter l'interface
+const me = await api<User>('/me');
 ```
 
-## Création du compte administrateur
+Le token expire après `JWT_EXPIRES_IN` (8 h par défaut). Sur une réponse `401`, le client redirige automatiquement vers `/login`. La déconnexion supprime le token côté front (`localStorage.removeItem`) — le back ne le révoque pas (voir [Rôles et autorisations](#rôles-et-autorisations)).
 
-Un script de seed crée le **premier** compte `Administrateur` (idempotent : il ne touche à rien si le compte existe déjà) :
+### 4. Règles à respecter
 
-```bash
-node apps/api/scripts/seed-admin.js
-```
+- **Données strictes** : l'API refuse `400` tout champ inconnu dans le corps d'une requête. N'envoyer que les champs documentés.
+- **Pagination** : `page` (défaut `1`) et `limit` (défaut `20`) sur les listes d'utilisateurs, prêts, notifications et journal d'audit.
+- **Format d'erreur** : `{ statusCode, message, error, path, timestamp }`. `message` peut être un tableau de chaînes si plusieurs champs sont invalides.
+- **Codes HTTP à gérer** :
 
-Les identifiants sont **configurés par variables d'environnement** — ne pas les laisser dans le code ni dans le README :
+| Code | Signification |
+|------|---------------|
+| `400` | Données invalides (champ manquant, format incorrect…) |
+| `401` | Non connecté ou token expiré → rediriger vers login |
+| `403` | Rôle insuffisant → masquer l'action dans l'UI |
+| `404` | Ressource introuvable |
+| `409` | Conflit (ex. prêt déjà retourné, e-mail déjà utilisé) |
+| `429` | Limite de débit chatbot dépassée (10 messages/minute) |
 
-| Variable             | Description              |
-| -------------------- | ------------------------ |
-| `ADMIN_EMAIL`        | Adresse e-mail du compte |
-| `ADMIN_PASSWORD`     | Mot de passe initial     |
-| `ADMIN_FIRST_NAME`   | Prénom                  |
-| `ADMIN_LAST_NAME`    | Nom                     |
+- **Rôles** : vérifier `user.role` pour afficher/masquer les actions dans l'interface, mais ne pas s'y fier pour la sécurité — l'API vérifie toujours le rôle côté serveur.
+- **Types partagés** : utiliser `import { ... } from '@fablab/shared'` plutôt que de redéfinir les enums et constantes.
+- **Chatbot** : lire le champ `suggestedAction` de la réponse pour proposer l'ouverture du formulaire de réservation. Ne jamais appeler `POST /api/reservations` directement depuis le chatbot — la confirmation passe toujours par l'utilisateur.
 
-Exemple :
+---
 
-```bash
-ADMIN_EMAIL=admin@example.org ADMIN_PASSWORD='<mot-de-passe-fort>' \
-  node apps/api/scripts/seed-admin.js
-```
+## Journal d'audit
 
-> **Important** : le mot de passe initial doit être choisi par vous, être long et
-> unique, puis **changé après la première connexion**. Ne partagez jamais ces
-> identifiants et ne les committez pas.
+La collection MongoDB `auditLogs` enregistre automatiquement les actions sensibles :
 
-## Journalisation (audit)
+| Action | Déclencheur |
+|--------|-------------|
+| `auth.login` | Connexion réussie |
+| `auth.login_failed` | Échec de connexion |
+| `auth.logout` | Déconnexion |
+| `user.created` | Création d'un compte |
+| `user.updated` | Modification d'un compte |
+| `user.password_changed` | Changement de mot de passe |
+| `settings.updated` | Mise à jour des paramètres |
+| `loan.created` | Création d'un prêt |
+| `loan.returned` | Retour d'un prêt |
 
-La collection MongoDB `auditLogs` enregistre les actions sensibles :
+Chaque entrée contient : `userId`, `action`, `resourceType`, `resourceId`, `details`, `ip`.
 
-`auth.login`, `auth.login_failed`, `auth.logout`, `user.created`, `user.updated`,
-`user.password_changed`, `settings.updated`
-
-Chaque entrée contient `userId`, `action`, `resourceType`, `resourceId`,
-`details` et `ip`. Consultation via `GET /api/audit-logs` (Administrateur).
+Consultation : `GET /api/audit-logs` (Administrateur uniquement), avec `page`, `limit` et filtre `action`.
