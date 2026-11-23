@@ -47,6 +47,8 @@ cp .env.example .env
 | `SMTP_HOST`       | Hôte SMTP (notifications e-mail)                       | Non         | —                             |
 | `SMTP_USER`       | Utilisateur SMTP                                        | Non         | —                             |
 | `SMTP_PASS`       | Mot de passe SMTP                                       | Non         | —                             |
+| `MAIL_FROM`       | Adresse d'expédition des e-mails                        | Non         | —                             |
+| `LOAN_MAX_DAYS`   | Durée maximale d'un prêt (jours)                        | Non         | `14`                          |
 
 > **Sécurité** : ne jamais committer le fichier `.env` ni aucune valeur secrète.
 > `JWT_SECRET` doit être une chaîne longue et aléatoire, différente par environnement.
@@ -84,6 +86,49 @@ npm run test --workspace @fablab/api
 > Les tests s'exécutent via `ts-node` et nécessitent que la commande soit lancée
 > avec `apps/api` comme répertoire de travail (c'est le cas des scripts npm ci-dessus),
 > afin que `apps/api/tsconfig.json` soit pris en compte.
+
+## Modules métier
+
+L'API est organisée en modules NestJS sous `apps/api/src/modules` :
+
+| Module            | Rôle                                                        |
+| ----------------- | ----------------------------------------------------------- |
+| `auth`            | Connexion JWT, session, garde d'authentification            |
+| `users`           | Comptes utilisateurs, profils, changement de mot de passe   |
+| `admin`           | Statistiques, paramètres de la plateforme                   |
+| `audit`           | Journal des actions sensibles (`auditLogs`)                 |
+| `resources`       | Ressources du FabLab : salles et équipements (modèle discriminé) |
+| `reservations`    | Réservation des salles et des équipements                  |
+| `availability`    | Disponibilités et créneaux                                  |
+| `loans`           | Prêts de matériel (durée max configurable via `LOAN_MAX_DAYS`) |
+| `locations`       | Sites et localisation des ressources                        |
+| `organizations`   | Organisations / structures utilisatrices                    |
+| `files`           | Upload de fichiers (Multer) et métadonnées associées        |
+| `notifications`   | Notifications (e-mail via SMTP, journal des événements)     |
+| `chatbot`         | Assistant conversationnel (intégration LLM, `AI_API_KEY`)   |
+| `collaboration`   | Fonctionnalités collaboratives                              |
+
+Chaque module suit la structure standard NestJS : `*.module.ts`, `*.controller.ts`,
+`*.service.ts`, `*.model.ts`, `*.validation.ts` et `*.test.ts`.
+
+## Infrastructure
+
+`infra/` contient la configuration de déploiement :
+
+- `compose.yaml` — MongoDB 7 et Redis 7 en conteneurs (volume `mongo_data`)
+- `docker/` — Dockerfiles de l'API et du frontend
+- `nginx/` — configuration du reverse proxy
+- `deploy/` — scripts et fichiers de déploiement
+
+```bash
+# Démarrer MongoDB et Redis localement
+docker compose -f infra/compose.yaml up -d
+```
+
+## Documentation
+
+- `docs/` — documentation fonctionnelle par module (`loans.md`, `notifications.md`, …)
+- `packages/shared` — types et constantes partagés entre le front et le back
 
 ## Rôles et autorisations
 
