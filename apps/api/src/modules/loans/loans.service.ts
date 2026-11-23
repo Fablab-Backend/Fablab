@@ -210,6 +210,120 @@ export class LoansService {
     return loan;
   }
 
+  /**
+   * Passe en OVERDUE les prêts échus non retournés et notifie l'emprunteur
+   * (LOAN_OVERDUE) au plus une fois par jour, ainsi que les responsables.
+   * Appelé par LoanOverdueJob ; les filtres atomiques rendent le passage
+   * idempotent en cas d'exécution concurrente.
+   */
+  async markOverdueLoans(
+    now: Date,
+  ): Promise<{ marked: number; notified: number }> {
+    const candidates = await this.loanModel.find({
+      status: { $in: [LoanStatus.ACTIVE, LoanStatus.OVERDUE] },
+      dueAt: { $lt: now },
+    });
+
+    let marked = 0;
+    let notified = 0;
+
+    for (const loan of candidates) {
+      try {
+        if (loan.status === LoanStatus.ACTIVE) {
+          const updated = await this.loanModel.updateOne(
+            { _id: loan._id, status: LoanStatus.ACTIVE },
+            { $set: { status: LoanStatus.OVERDUE } },
+          );
+          if (updated.modifiedCount > 0) {
+            marked += 1;
+          }
+        }
+
+        const lastNotifiedAt = loan.overdueNotifiedAt
+          ? new Date(loan.overdueNotifiedAt).getTime()
+          : null;
+        if (
+          lastNotifiedAt !== null &&
+          now.getTime() - lastNotifiedAt < DAY_MS
+        ) {
+          continue;
+        }
+
+        // Verrou optimiste : un seul worker peut réclamer l'envoi.
+        const claim = await this.loanModel.updateOne(
+          {
+            _id: loan._id,
+            overdueNotifiedAt: loan.overdueNotifiedAt ?? null,
+          },
+          { $set: { overdueNotifiedAt: now } },
+        );
+        if (claim.modifiedCount === 0) {
+          continue;
+        }
+
+        notified += 1;
+        await this.notifyOverdue(loan);
+      } catch (error) {
+        this.logger.error(
+          `Échec du traitement du prêt en retard ${loan._id?.toString?.() ?? ''}`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      }
+    }
+
+    return { marked, notified };
+  }
+
+  /**
+   * Renvoie les prêts actifs dont l'échéance tombe dans les `hours`
+   * prochaines heures et pour lesquels aucun rappel n'a été envoyé, en
+   * renseigne `reminderSentAt` puis notifie l'emprunteur (LOAN_REMINDER)
+   * une seule fois. Appelé par LoanReminderJob.
+   */
+  async findDueSoon(now: Date, hours: number): Promise<LoanDocument[]> {
+    const until = new Date(now.getTime() + hours * 60 * 60 * 1000);
+    const loans = await this.loanModel.find({
+      status: LoanStatus.ACTIVE,
+      dueAt: { $gt: now, $lte: until },
+      reminderSentAt: null,
+    });
+
+    const reminded: LoanDocument[] = [];
+
+    for (const loan of loans) {
+      try {
+        const claim = await this.loanModel.updateOne(
+          { _id: loan._id, reminderSentAt: null },
+          { $set: { reminderSentAt: now } },
+        );
+        if (claim.modifiedCount === 0) {
+          continue;
+        }
+
+        await this.safeNotify({
+          userId: loan.borrowerId.toHexString(),
+          type: NotificationType.LOAN_REMINDER,
+          title: 'Échéance de prêt proche',
+          message: `Votre prêt arrive à échéance le ${new Date(
+            loan.dueAt,
+          ).toLocaleDateString('fr-FR')}.`,
+          data: {
+            loanId: loan._id.toString(),
+            equipmentId: loan.equipmentId.toString(),
+          },
+        });
+        reminded.push(loan);
+      } catch (error) {
+        this.logger.error(
+          `Échec du rappel d'échéance du prêt ${loan._id?.toString?.() ?? ''}`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      }
+    }
+
+    return reminded;
+  }
+
   private async assertLoanableEquipment(equipmentId: string) {
     // findOne lève NotFoundException (404) si la ressource n'existe pas.
     const resource = (await this.resourcesService.findOne(
@@ -284,9 +398,48 @@ export class LoansService {
     }
   }
 
+  private async notifyOverdue(loan: LoanDocument): Promise<void> {
+    const dueAt = loan.dueAt ? new Date(loan.dueAt) : null;
+    const data = {
+      loanId: loan._id.toString(),
+      equipmentId: loan.equipmentId.toString(),
+    };
+    await this.safeNotify({
+      userId: loan.borrowerId.toHexString(),
+      type: NotificationType.LOAN_OVERDUE,
+      title: 'Prêt en retard',
+      message: dueAt
+        ? `Votre prêt est en retard depuis le ${dueAt.toLocaleDateString('fr-FR')}.`
+        : 'Votre prêt est en retard.',
+      data,
+    });
+    await this.notifyManagers(loan, {
+      type: NotificationType.LOAN_OVERDUE,
+      title: 'Prêt en retard',
+      message: `Le prêt ${loan._id.toString()} est en retard.`,
+      data,
+    });
+  }
+
   private async notifyManagersOfDamagedReturn(
     loan: LoanDocument,
     condition: EquipmentCondition,
+  ): Promise<void> {
+    await this.notifyManagers(loan, {
+      type: NotificationType.LOAN_RETURNED,
+      title: 'Retour de matériel à vérifier',
+      message: `Le prêt ${loan._id.toString()} a été retourné avec le matériel en état ${condition}.`,
+      data: {
+        loanId: loan._id.toString(),
+        equipmentId: loan.equipmentId.toString(),
+        conditionAtReturn: condition,
+      },
+    });
+  }
+
+  private async notifyManagers(
+    loan: LoanDocument,
+    notification: Omit<NotifyInput, 'userId'>,
   ): Promise<void> {
     try {
       for (const role of PRIVILEGED_ROLES) {
@@ -296,22 +449,12 @@ export class LoansService {
           limit: 100,
         });
         for (const manager of items) {
-          await this.safeNotify({
-            userId: manager.id,
-            type: NotificationType.LOAN_RETURNED,
-            title: 'Retour de matériel à vérifier',
-            message: `Le prêt ${loan._id.toString()} a été retourné avec le matériel en état ${condition}.`,
-            data: {
-              loanId: loan._id.toString(),
-              equipmentId: loan.equipmentId.toString(),
-              conditionAtReturn: condition,
-            },
-          });
+          await this.safeNotify({ userId: manager.id, ...notification });
         }
       }
     } catch (error) {
       this.logger.error(
-        'Échec de la notification des responsables pour un retour endommagé',
+        'Échec de la notification des responsables',
         error instanceof Error ? error.stack : String(error),
       );
     }

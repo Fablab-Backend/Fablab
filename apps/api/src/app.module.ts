@@ -13,6 +13,7 @@ import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { ChatbotModule } from './modules/chatbot/chatbot.module';
 import { LoansModule } from './modules/loans/loans.module';
+import { JobsModule } from './jobs/jobs.module';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { LoansModule } from './modules/loans/loans.module';
     NotificationsModule,
     ChatbotModule,
     LoansModule,
+    JobsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },
