@@ -13,7 +13,8 @@ import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { ChatbotModule } from './modules/chatbot/chatbot.module';
 import { LoansModule } from './modules/loans/loans.module';
-
+import { ReservationsModule } from './modules/reservations/reservations.module';
+import { AvailabilityModule } from './modules/availability/availability.module';
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -29,6 +30,8 @@ import { LoansModule } from './modules/loans/loans.module';
     NotificationsModule,
     ChatbotModule,
     LoansModule,
+    ReservationsModule,
+    AvailabilityModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },
